@@ -1,8 +1,8 @@
 {
   "name": "acris-assistant",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "Local writing assistant: autocomplete, ACRIS plugin suggestions, feature check and translations via Open WebUI and llama.cpp",
+  "description": "Local writing assistant: autocomplete, ACRIS plugin suggestions, feature check and translations, with a local BM25 knowledge base over the plugin catalog and a local LLM (llama.cpp)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -1,6 +1,6 @@
 # ai-assistant
 
-A self-hosted AI assistant for the **ACRIS plugin ecosystem** (Shopware 6). One plain-Node server, zero npm dependencies, with a single-page UI. It pairs a local LLM with an Open WebUI knowledge base seeded from the ACRIS plugin catalog.
+A self-hosted AI assistant for the **ACRIS plugin ecosystem** (Shopware 6). One plain-Node server, zero npm dependencies, with a single-page UI. It pairs a local LLM with a local, in-process knowledge base that indexes the ACRIS plugin catalog directly from the `catalog/` folder.
 
 ## Tech stack
 
@@ -8,19 +8,18 @@ A self-hosted AI assistant for the **ACRIS plugin ecosystem** (Shopware 6). One 
 |---|---|
 | Backend | Node 20+, bare `node:http` — **no npm dependencies** |
 | Frontend | Single `public/index.html` (vanilla JS, no framework) |
-| LLM | Local llama.cpp router (`llama-backend`) via an OpenAI-compatible endpoint, e.g. Qwen3.5-9B; optionally routed through Open WebUI |
-| Knowledge base | Open WebUI KB (retrieval-augmented answers), seeded from the local catalog |
-| Data | `catalog/` — ACRIS plugin catalog (`acris-plugins.json`), feature matrix (`acris-features.tsv`, scraped from acris.at + Shopware Store), company profile (`acris-company.txt`) |
+| LLM | Local llama.cpp router (`llama-backend`) via an OpenAI-compatible endpoint, e.g. Qwen3.5-9B; Open WebUI only as an optional chat router |
+| Knowledge base | Local BM25 keyword index built in-process from `catalog/` — bilingual documents (German JSON catalog enriched with the TSV's English summaries/keywords), no external service, no seeding |
+| Data | `catalog/` — ACRIS plugin catalog (`acris-plugins.json`), feature matrix (`acris-features.tsv`, scraped from acris.at + Shopware Store), company profile (`acris-company.txt`) — the single source of truth for both the knowledge base and the feature check |
 | Deploy | Docker (Compose), `node:20-alpine`, on the external `ai` docker network |
 
 ## Features
 
 - **Text autocomplete** (`/api/complete`) — the model *continues* the text you're typing (prefill-style), with model pre-warming on page load
-- **Plugin matching** (`/api/plugins`) — given a task description, suggests ACRIS plugins with evidence from the catalog/KB
+- **Plugin matching** (`/api/plugins`) — given a task description, the model first rewrites it into short bilingual (EN/DE) keyword phrases, a BM25 search over the catalog picks the candidate plugins, and the model picks the best 1–3
 - **Feature check** (`/api/feature-check`) — "does a plugin do X?" against the ~28k-token feature catalog: BM25 keyword shortlist first (GPU-free), quick LLM pass, then an optional deep reasoning pass with hard token/time limits; answers are structured (exists / partial / none + plugin + evidence)
 - **Translations** (`/api/translate`) — translate plugin texts across ~12 languages (DE, EN, NL, FR, ES, FI, NO-Nynorsk, SV, CS, PT, …)
-- **KB seeding** (`/api/kb/seed`) — uploads the catalog into the Open WebUI knowledge base in one batch (takes a few minutes)
-- **Status** (`/api/status`) — model, KB entry count, catalog size, available languages
+- **Status** (`/api/status`) — model, KB document count, catalog size, available languages
 
 ## Project layout
 
@@ -38,21 +37,21 @@ compose.yml       node:20-alpine container, env_file .env, on the external "ai" 
    ```sh
    cp .env.example .env
    ```
-   Required: an Open WebUI endpoint + credentials (API key *or* email/password login), the `LLM_MODEL` name, and (recommended) `LLM_URL` for direct llama.cpp completions. `KB_ID` pins the knowledge base so an empty duplicate is never picked — leave it empty to auto-create/look up by `KB_NAME` first, then pin the real UUID in `.env`.
+   Required: the `LLM_MODEL` name and (recommended) `LLM_URL` for direct llama.cpp completions. The Open WebUI variables are only needed if you want to route the LLM through Open WebUI instead.
 2. Start (requires the external `ai` docker network):
    ```sh
    docker compose up -d
    ```
-3. Open <http://localhost:8091>, click **Load ACRIS catalog** once to seed the knowledge base, then use the tools.
+3. Open <http://localhost:8091> and use the tools. The knowledge base is indexed from `catalog/` on startup — nothing to seed. After editing the catalog, restart the container to pick up the changes.
 
 ### Key env vars
 
 | Var | Meaning |
 |---|---|
-| `OPENWEBUI_URL` / `_API_KEY` / `_EMAIL`+`_PASSWORD` | Knowledge base + optional LLM routing |
-| `LLM_URL` | Direct OpenAI-compatible endpoint (skips Open WebUI for completions) |
+| `LLM_URL` | Direct OpenAI-compatible endpoint (recommended) |
+| `OPENWEBUI_URL` / `_API_KEY` / `_EMAIL`+`_PASSWORD` | Optional: route the LLM through Open WebUI when `LLM_URL` is not set |
 | `LLM_MODEL` / `FEATURE_MODEL` | Model names (feature check needs a big context, ~131k configured) |
-| `KB_ID` / `KB_NAME` / `KB_TOP_K` | Knowledge base pinning and retrieval width |
+| `KB_TOP_K` | How many catalog documents the local keyword search hands to the plugin matcher |
 | `FEATURE_THINKING` | `0` disables the deep reasoning pass of the feature check |
 | `FEATURE_SHORTLIST` | How many plugins the keyword pre-filter hands to the model (0 = whole catalog) |
 | `FEATURE_DEEP_TIMEOUT_S` / `FEATURE_DEEP_MAX_TOKENS` | Hard limits for the deep pass |
@@ -60,6 +59,7 @@ compose.yml       node:20-alpine container, env_file .env, on the external "ai" 
 ## Notes
 
 - No npm dependencies — `package.json` exists only for tooling metadata; there is nothing to `npm install`.
-- The server keeps the OWUI session token in memory and renews it on 401s.
+- The knowledge base is a BM25 index built in memory from `catalog/` on first use — the catalog folder is the single source of truth. Edit the files, restart the container. Plugin matching additionally asks the LLM to rewrite the requirement into bilingual keyword phrases, so English queries match the German catalog entries (the keyword-world equivalent of semantic search).
+- When `LLM_URL` is not set, the server keeps the Open WebUI session token in memory and renews it on 401s.
 - `.env` is gitignored and contains live credentials — never commit it.
 - The app itself has no auth; keep it on a trusted network (e.g. Tailscale).

@@ -193,8 +193,6 @@
             <h2>Knowledge base</h2>
             <div class="body">
                 <div class="empty" id="kb-info">...</div>
-                <div class="msg"><button id="seed">Load ACRIS catalog</button></div>
-                <div class="msg" id="kb-msg"></div>
             </div>
         </div>
     </aside>
@@ -670,12 +668,11 @@
             $('pill-model').textContent = 'model: ' + s.model;
             $('pill-model').className = 'pill ok';
             const k = $('pill-kb');
-            k.textContent = s.kb ? 'knowledge base: ' + s.kb.count + ' entries' : 'knowledge base: error';
+            k.textContent = s.kb ? 'knowledge base: ' + s.kb.count + ' docs' : 'knowledge base: error';
             k.className = 'pill ' + (s.kb ? 'ok' : 'bad');
             $('kb-info').textContent = s.kb
-                ? '"' + s.kb.name + '" in Open WebUI: ' + s.kb.count + ' of ' + s.catalogSize + ' catalog documents loaded.'
+                ? s.kb.count + ' documents indexed from the catalog folder. Search runs locally (BM25), no external service.'
                 : s.kbError;
-            $('seed').hidden = !!s.kb && s.kb.count >= s.catalogSize;
             $('fc-catalog').textContent = s.featureCatalog
                 ? s.featureCatalog.count + ' plugins, ' + s.featureCatalog.date
                 : 'catalog missing';
@@ -692,21 +689,6 @@
             setLatency('backend unreachable', 'bad');
         }
     }
-
-    $('seed').onclick = async (e) => {
-        e.target.disabled = true;
-        $('kb-msg').textContent = 'Uploading the ACRIS catalog, this takes a few minutes ...';
-        try {
-            const r = await post('api/kb/seed', {});
-            $('kb-msg').textContent = 'Added ' + r.added + ', already present ' + r.skipped
-                + (r.errors.length ? ', failed ' + r.errors.length + ': ' + r.errors[0] : '');
-        } catch (err) {
-            $('kb-msg').textContent = 'Failed: ' + err.message;
-        } finally {
-            e.target.disabled = false;
-            loadStatus();
-        }
-    };
 
     render();
     updateChips();

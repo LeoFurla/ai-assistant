@@ -1,7 +1,8 @@
 'use strict';
 
 // AI Assistant: text autocomplete, ACRIS plugin suggestions, feature check and translations.
-// LLM and knowledge base both go through Open WebUI (or LLM_URL for direct llama.cpp).
+// LLM goes through LLM_URL (direct llama.cpp) or, optionally, Open WebUI as a chat router.
+// The knowledge base is a local BM25 index over the catalog/ folder, built in-process.
 // Zero npm dependencies, requires Node 20+.
 
 const http = require('node:http');
@@ -16,7 +17,6 @@ const OWUI_PASSWORD = process.env.OPENWEBUI_PASSWORD || '';
 // Optional direct OpenAI-compatible endpoint, e.g. http://llama-backend:8080/v1 (skips Open WebUI for completions).
 const LLM_URL = (process.env.LLM_URL || '').replace(/\/+$/, '');
 const LLM_MODEL = process.env.LLM_MODEL || 'Qwen3.5-9B-Q4_K_M';
-const KB_NAME = process.env.KB_NAME || 'AI Assistant';
 const KB_TOP_K = Number(process.env.KB_TOP_K || 6);
 const PROMPT_CHARS = Number(process.env.PROMPT_CHARS || 3000);
 const CATALOG_DIR = process.env.CATALOG_DIR || path.join(__dirname, 'catalog');
@@ -83,23 +83,6 @@ async function owuiFetch(url, init = {}, retry = true) {
     return res;
 }
 
-async function owui(pathname, { method = 'GET', json, form } = {}) {
-    const headers = { Accept: 'application/json' };
-    let body;
-    if (json !== undefined) {
-        headers['Content-Type'] = 'application/json';
-        body = JSON.stringify(json);
-    } else if (form) {
-        body = form;
-    }
-    const res = await owuiFetch(OWUI_URL + pathname, { method, headers, body });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Open WebUI ${method} ${pathname} -> ${res.status}: ${text.slice(0, 300)}`);
-    return text ? JSON.parse(text) : null;
-}
-
-const asList = (r) => (Array.isArray(r) ? r : (r && (r.items || r.data)) || []);
-
 // ---------------------------------------------------------------------------
 // LLM (OpenAI-compatible chat completions)
 // ---------------------------------------------------------------------------
@@ -162,46 +145,24 @@ async function chatStream(messages, opts, out, signal) {
 }
 
 // ---------------------------------------------------------------------------
-// Knowledge base
+// Knowledge base: local BM25 index over catalog/ (no external service, no seeding)
 // ---------------------------------------------------------------------------
 
-let kbId = process.env.KB_ID || null;
-const retrievalCache = new Map();
+let kb = null;
 
-async function ensureKb() {
-    if (kbId) return kbId;
-    const existing = asList(await owui('/api/v1/knowledge/')).find((k) => k.name === KB_NAME);
-    kbId = existing
-        ? existing.id
-        : (await owui('/api/v1/knowledge/create', {
-            method: 'POST',
-            json: { name: KB_NAME, description: 'ACRIS company profile and plugin catalog for the AI Assistant' },
-        })).id;
-    return kbId;
-}
-
-async function listEntries() {
-    const id = await ensureKb();
-    return asList(await owui(`/api/v1/knowledge/${id}/files?limit=1000`))
-        .map((f) => ({ id: f.id, name: (f.meta && f.meta.name) || f.filename || f.id }));
-}
-
-async function uploadEntry(filename, text) {
-    const id = await ensureKb();
-    const form = new FormData();
-    form.append('file', new Blob([text], { type: 'text/plain' }), filename);
-    // Synchronous processing: the knowledge base only accepts files that are already processed.
-    const file = await owui('/api/v1/files/?process=true&process_in_background=false', { method: 'POST', form });
-    await owui(`/api/v1/knowledge/${id}/file/add`, { method: 'POST', json: { file_id: file.id } });
-}
-
-function pluginDocument(p) {
+function pluginDocument(p, feat) {
     const lines = [
         `ACRIS plugin: ${p.label} (${p.name})`,
         `Description: ${p.description}`,
     ];
     if (p.category) lines.push(`Category: ${p.category}`);
     if (p.keywords) lines.push(`Keywords: ${p.keywords}`);
+    // English summary and keywords from the TSV feature catalog: without them, English queries
+    // would rarely match the (mostly German) JSON catalog entries.
+    if (feat) {
+        if (feat.summary) lines.push(`English summary: ${feat.summary}`);
+        if (feat.keywords) lines.push(`Catalog keywords: ${feat.keywords}`);
+    }
     if (p.highlights && p.highlights.length) lines.push(`Highlights: ${p.highlights.join('; ')}`);
     if (p.features && p.features.length) lines.push(`Features: ${p.features.join('; ')}`);
     if (p.price) lines.push(`Price: ${p.price}`);
@@ -209,65 +170,66 @@ function pluginDocument(p) {
     return lines.join('\n') + '\n';
 }
 
-// Every catalog document as { filename, text }: the company profile (*.txt) plus one file per plugin.
-function catalogDocuments() {
+// Builds the knowledge base: one document per plugin (JSON catalog, enriched with the TSV's
+// English fields) plus the company profile (*.txt). The index lives in memory and is rebuilt
+// on container restart, so the catalog folder is the single source of truth.
+function loadKb() {
+    if (kb) return kb;
+
+    let featureByName = new Map();
+    try {
+        featureByName = new Map(loadFeatureCatalog().plugins.map((p) => [p.name, p]));
+    } catch (e) {
+        console.error('kb: feature catalog unreadable, using JSON catalog only:', e.message);
+    }
+
     const docs = [];
     for (const file of fs.readdirSync(CATALOG_DIR)) {
         const full = path.join(CATALOG_DIR, file);
         if (file.endsWith('.txt')) {
-            docs.push({ filename: file, text: fs.readFileSync(full, 'utf8') });
+            docs.push({ source: file, text: fs.readFileSync(full, 'utf8') });
         } else if (file.endsWith('.json')) {
             for (const p of JSON.parse(fs.readFileSync(full, 'utf8'))) {
-                docs.push({ filename: `${p.name}.txt`, text: pluginDocument(p) });
+                docs.push({ source: `${p.name}.txt`, text: pluginDocument(p, featureByName.get(p.name)) });
             }
         }
     }
-    return docs;
+
+    // Same BM25 index as the feature check: stemmed tokens, shared vocabulary.
+    const df = new Map();
+    const index = docs.map((d) => {
+        const tokens = searchTokens(d.text).map(stem);
+        const tf = new Map();
+        tokens.forEach((t) => tf.set(t, (tf.get(t) || 0) + 1));
+        tf.forEach((_, t) => df.set(t, (df.get(t) || 0) + 1));
+        return { ...d, tf, length: tokens.length };
+    });
+    const avgLength = index.reduce((sum, d) => sum + d.length, 0) / index.length;
+
+    kb = { index, df, avgLength };
+    return kb;
 }
 
-// Uploads every catalog document that is not in the knowledge base yet (matched by file name).
-async function seedCatalog() {
-    const existing = new Set((await listEntries()).map((e) => e.name));
-    const all = catalogDocuments();
-    const todo = all.filter((d) => !existing.has(d.filename));
-
-    const errors = [];
-    let added = 0;
-    const worker = async () => {
-        while (todo.length) {
-            const d = todo.shift();
-            try {
-                await uploadEntry(d.filename, d.text);
-                added++;
-            } catch (e) {
-                errors.push(`${d.filename}: ${e.message}`);
-            }
-        }
-    };
-    await Promise.all([worker(), worker(), worker()]);
-    retrievalCache.clear();
-    return { added, skipped: all.length - added - errors.length, errors };
-}
-
-async function retrieve(query, k) {
+// Keyword search over the catalog. Synchronous and in-memory, so it is cheap enough to run
+// on every autocomplete request. Returns { text, source } documents, best first.
+function retrieve(query, k) {
     query = query.trim();
     if (!query) return [];
-    const key = `${k}|${query}`;
-    if (retrievalCache.has(key)) return retrievalCache.get(key);
-
-    const id = await ensureKb();
-    const r = await owui('/api/v1/retrieval/query/collection', {
-        method: 'POST',
-        json: { collection_names: [id], query, k },
-    });
-    const docs = (r.documents?.[0] || []).map((text, i) => ({
-        text,
-        source: r.metadatas?.[0]?.[i]?.name || '',
-    }));
-
-    retrievalCache.set(key, docs);
-    if (retrievalCache.size > 200) retrievalCache.delete(retrievalCache.keys().next().value);
-    return docs;
+    const terms = expandQuery(searchTokens(query));
+    const { index, df, avgLength } = loadKb();
+    const n = index.length;
+    const scored = [];
+    for (const doc of index) {
+        let score = 0;
+        for (const t of terms) {
+            const tf = doc.tf.get(t);
+            if (!tf) continue;
+            const idf = Math.log(1 + (n - df.get(t) + 0.5) / (df.get(t) + 0.5));
+            score += idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * doc.length / avgLength));
+        }
+        if (score > 0) scored.push({ text: doc.text, source: doc.source, score });
+    }
+    return scored.sort((a, b) => b.score - a.score).slice(0, k);
 }
 
 // ---------------------------------------------------------------------------
@@ -315,9 +277,29 @@ function parsePlugin(doc) {
     return { name: m[2], label: m[1], description: field('Description'), url: field('URL') };
 }
 
+// The index matches words, not meaning: the requirement is first rewritten by the model into a few
+// short keyword phrases in English and German (the catalog is bilingual). This is the keyword-world
+// equivalent of a semantic search, and it is what makes English queries find the German catalog entries.
+async function expandRequirement(requirement, signal) {
+    const answer = await chat([
+        {
+            role: 'system',
+            content: 'You prepare a keyword search over a bilingual (English/German) Shopware plugin catalog. '
+                + 'Rewrite the requirement into 3 to 5 short keyword phrases using typical catalog wording, '
+                + 'mixing English and German. No full sentences, no explanations, only the phrases, comma separated.',
+        },
+        { role: 'user', content: requirement },
+    ], { max_tokens: 120, temperature: 0 }, signal);
+    return answer.trim();
+}
+
 async function suggestPlugins(requirement, signal) {
+    let expanded = '';
+    try {
+        expanded = await expandRequirement(requirement, signal);
+    } catch {}
     const candidates = [];
-    for (const doc of await retrieve(requirement, KB_TOP_K)) {
+    for (const doc of retrieve(expanded ? `${requirement}, ${expanded}` : requirement, KB_TOP_K)) {
         const p = parsePlugin(doc);
         if (p && !candidates.some((c) => c.name === p.name)) candidates.push(p);
     }
@@ -729,16 +711,16 @@ const server = http.createServer(async (req, res) => {
 
         if (req.method === 'GET' && p === '/api/status') {
             warmUp();
-            const status = { model: LLM_MODEL, kb: null, kbError: null, catalogSize: catalogDocuments().length, languages: LANGUAGES };
+            const status = { model: LLM_MODEL, kb: null, kbError: null, languages: LANGUAGES };
+            try {
+                status.kb = { name: 'catalog (local)', count: loadKb().index.length };
+            } catch (e) {
+                status.kbError = e.message;
+            }
             try {
                 status.featureCatalog = { count: loadFeatureCatalog().plugins.length, date: FEATURE_CATALOG_DATE, model: FEATURE_MODEL, deep: FEATURE_THINKING };
             } catch (e) {
                 status.featureCatalogError = e.message;
-            }
-            try {
-                status.kb = { name: KB_NAME, count: (await listEntries()).length };
-            } catch (e) {
-                status.kbError = e.message;
             }
             return send(res, 200, status);
         }
@@ -775,10 +757,6 @@ const server = http.createServer(async (req, res) => {
             return res.end();
         }
 
-        if (req.method === 'POST' && p === '/api/kb/seed') {
-            return send(res, 200, await seedCatalog());
-        }
-
         send(res, 404, { error: 'not found' });
     } catch (e) {
         if (e.name === 'AbortError') return;
@@ -788,5 +766,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`AI Assistant on :${PORT}  model=${LLM_MODEL}  via=${LLM_URL || OWUI_URL}  kb="${KB_NAME}"`);
+    console.log(`AI Assistant on :${PORT}  model=${LLM_MODEL}  via=${LLM_URL || OWUI_URL}  kb=local catalog`);
 });
