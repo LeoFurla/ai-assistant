@@ -1,0 +1,36 @@
+ACRIS company profile
+
+ACRIS E-Commerce GmbH is a Shopware Premium Extension agency ("Shopware Premium Extension Agentur", tagline "ACRIS - die Shopware Spezialisten"). ACRIS develops Shopware 6 plugins and individual solutions that make online shops more efficient, flexible and successful.
+
+Address: ACRIS E-Commerce GmbH, Am Pfenningberg 60, 4040 Linz, Austria (Österreich).
+Phone: +43 720 303750
+Office hours: Monday to Thursday 8:00 - 17:00, Friday 8:00 - 13:00.
+Website: https://www.acris.at (English: https://www.acris.at/en)
+Contact form: https://www.acris.at/kontakt/ (English: https://www.acris.at/en/contact). Request types: general, support, feature request, project request, questions about a plugin. Support requests need the ACRIS extension, extension version, shop domain and Shopware version.
+All extensions A-Z: https://www.acris.at/shopware-erweiterungen/erweiterungen-a-z
+
+History and facts:
+- Developing e-commerce solutions since 2010, more than 17 years of experience.
+- Shopware partner for more than 10 years, certified Shopware expertise.
+- More than 200 plugins in the Shopware Store, one of the largest Shopware plugin portfolios.
+- More than 30,000 downloads and more than 5,000 plugin customers.
+- More than 17 employees: developers, designers and e-commerce experts.
+- Awards: Shopware Biggest Growth Award 2024, Best Support Rating Award 2025.
+- 5.0 star rating, more than 6,000 support requests solved, fast response times.
+
+What makes ACRIS different:
+- Quality: every plugin goes through strict quality assurance, automated tests and manual code reviews.
+- Personal support: direct, individual support instead of anonymous forms.
+- Built for practice: plugins come from real customer requirements and solve concrete everyday e-commerce problems.
+- Fast implementation: individual requirements and new features are implemented quickly by a large development team.
+
+Plugin portfolio:
+- Plugins are published under the vendor name ACRIS E-Commerce GmbH. Technical names start with "Acris" (for example AcrisSearch, AcrisTax, AcrisWishlist). The Proxa plugins (for example ProxaAgeVerification) also belong to ACRIS and are not third-party products.
+- Plugin types: Essential, Professional and Premium.
+- Categories: Administration & processes, B2B & personalization, Content & shopping experiences, Products & categories, Law & taxes, Registration & checkout, Sales & promotions, SEO & internationalization, Search & navigation, Theme & UX.
+- Use cases: optimize B2B processes, increase conversion, improve the shopping experience, increase revenue, increase legal certainty, increase visibility.
+- Most plugins are offered as a monthly or yearly subscription in the Shopware Store.
+
+Versioning convention for ACRIS plugins: Shopware 6.7 versions use the 2.x line, Shopware 6.6 versions use 1.x, Shopware 6.5 versions use 0.x.
+
+Branding: ACRIS Green, hex color #a6c836.

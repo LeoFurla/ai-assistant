@@ -1,0 +1,27 @@
+name: ai-assistant
+
+# Deploy: upload this folder to /DATA/AppData/dev/ai-assistant, then
+#   docker compose up -d
+# Requires the "ai" network from the ai-infra stack.
+
+services:
+  ai-assistant:
+    image: node:20-alpine
+    container_name: ai-assistant
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "server.js"]
+
+    env_file: .env
+
+    volumes:
+      - ./:/app:ro
+
+    networks: [ai]
+
+    ports:
+      - "0.0.0.0:8091:8091"
+
+networks:
+  ai:
+    external: true

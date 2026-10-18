@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Assistant</title>
+<style>
+    :root {
+        --brand-green: #a6c836;
+        --bg: #f5f6f1;
+        --panel: #ffffff;
+        --text: #1d1f1a;
+        --muted: #767a6e;
+        --ghost: #a2a69a;
+        --line: #e1e4d8;
+        --accent-text: #5f7a12;
+        --accent-soft: #eef4d9;
+        --bad: #b5452f;
+        --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+        --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bg: #151613;
+            --panel: #1e201b;
+            --text: #e7e9e1;
+            --muted: #8d9184;
+            --ghost: #686c60;
+            --line: #2e3129;
+            --accent-text: #a6c836;
+            --accent-soft: #2a3318;
+            --bad: #e07a63;
+        }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); }
+    header {
+        display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+        padding: 12px 20px; border-bottom: 3px solid var(--brand-green); background: var(--panel);
+    }
+    header h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: .02em; }
+    header h1 span { color: var(--accent-text); }
+    .pills { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+    .pill.ok { color: var(--accent-text); border-color: var(--brand-green); }
+    .pill.bad { color: var(--bad); border-color: var(--bad); }
+
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; padding: 20px; align-items: start; }
+    @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+    section, aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    .card h2 { font-size: 13px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 600; }
+    .card .body { padding: 12px 14px; }
+
+    /* Ghost-text editor: transparent textarea over a mirror that renders the suggestion. */
+    .editor { position: relative; height: 50vh; min-height: 280px; }
+    .editor:focus-within { border-color: var(--brand-green); }
+    .editor textarea, .editor .mirror {
+        position: absolute; inset: 0; margin: 0; width: 100%; height: 100%;
+        padding: 16px 18px; border: 0; border-radius: 8px;
+        font: 15px/1.7 var(--mono); letter-spacing: 0; tab-size: 4;
+        white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+        overflow-y: scroll;
+    }
+    .editor .mirror { color: transparent; pointer-events: none; }
+    .editor .mirror .ghost { color: var(--ghost); }
+    .editor textarea { background: transparent; color: var(--text); resize: none; outline: none; caret-color: var(--accent-text); }
+
+    .bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    kbd { font: 11px var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+    select { font: 13px var(--sans); color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+    button {
+        font: 13px var(--sans); font-weight: 600; border: 1px solid var(--brand-green);
+        background: var(--brand-green); color: #1d1f1a; border-radius: 6px; padding: 6px 12px; cursor: pointer;
+    }
+    button.sec { background: transparent; color: var(--accent-text); }
+    button:disabled { opacity: .5; cursor: default; }
+    .card h2.split { display: flex; justify-content: space-between; gap: 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row + .row, .row + .output, .output + .row { margin-top: 10px; }
+    .output { white-space: pre-wrap; font: 13px/1.6 var(--mono); max-height: 40vh; overflow: auto; margin: 0; min-height: 3em; }
+    .output.empty { color: var(--muted); font-family: var(--sans); }
+    .msg { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .empty { color: var(--muted); font-size: 12px; }
+
+    .req { font-size: 12px; color: var(--muted); margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .plugins { list-style: none; margin: 0; padding: 0; }
+    .plugins li { padding: 7px 0 7px 10px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; cursor: pointer; }
+    .plugins li.picked { border-left-color: var(--brand-green); }
+    .plugins li:last-child { border-bottom: 0; }
+    .plugins li:hover .pname { text-decoration: underline; }
+    .plugins .pname { font-weight: 600; font-size: 13px; }
+    .plugins .pdesc { font-size: 12px; color: var(--muted); }
+    .plugins a { font-size: 12px; color: var(--accent-text); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--accent-soft); color: var(--accent-text); }
+
+    .fc-input {
+        width: 100%; min-height: 64px; resize: vertical; font: 13px/1.5 var(--sans); color: var(--text);
+        background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; outline: none;
+    }
+    .fc-input:focus { border-color: var(--brand-green); }
+    .verdict { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); }
+    .verdict.exists { color: var(--accent-text); border-color: var(--brand-green); background: var(--accent-soft); }
+    .verdict.partial { color: var(--accent-text); border-color: var(--brand-green); border-style: dashed; }
+    .verdict.missing, .verdict.unclear { color: var(--bad); border-color: var(--bad); }
+    .fc-summary { margin-top: 8px; font-size: 13px; }
+    .plugins .evidence { font-size: 12px; margin-top: 2px; }
+    .plugins .evidence.unverified { color: var(--bad); }
+    .plugins li.static { cursor: default; }
+    .plugins li.static:hover .pname { text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+    <h1><span>AI</span> Assistant</h1>
+    <div class="pills">
+        <span class="pill" id="pill-model">model: ...</span>
+        <span class="pill" id="pill-kb">knowledge base: ...</span>
+        <span class="pill" id="pill-latency">idle</span>
+    </div>
+</header>
+
+<main>
+    <section>
+        <div class="bar">
+            <select id="mode">
+                <option value="plugins">Plugin suggestions per line</option>
+                <option value="text">Text autocomplete</option>
+            </select>
+        </div>
+        <div class="card editor">
+            <div class="mirror" id="mirror" aria-hidden="true"><span id="m-before"></span><span class="ghost" id="m-ghost"></span><span id="m-after"></span></div>
+            <textarea id="editor" spellcheck="false" placeholder="Write one webshop requirement per line, or switch to text autocomplete. Suggestions appear in grey."></textarea>
+        </div>
+        <div class="bar">
+            <span><kbd>Tab</kbd> accept &nbsp; <kbd>Ctrl</kbd>+<kbd>&rarr;</kbd> word &nbsp; <kbd>Esc</kbd> dismiss &nbsp; <kbd>Ctrl</kbd>+<kbd>Space</kbd> suggest</span>
+        </div>
+
+        <div class="card">
+            <h2>Matching ACRIS plugins</h2>
+            <div class="body">
+                <div class="req" id="req">Type a requirement in the editor.</div>
+                <ul class="plugins" id="plugins"></ul>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="split">Translate <span class="empty" id="scope">whole text</span></h2>
+            <div class="body">
+                <div class="row">
+                    <select id="lang"></select>
+                    <button id="tr-one">Translate</button>
+                    <button class="sec" id="tr-all">All 17 languages</button>
+                    <span class="empty" id="tr-info"></span>
+                </div>
+                <pre class="output empty" id="output">Select text in the editor (or nothing for the whole text) and translate it.</pre>
+                <div class="row">
+                    <button id="out-replace" disabled>Replace</button>
+                    <button class="sec" id="out-copy" disabled>Copy</button>
+                    <button class="sec" id="out-stop" hidden>Stop</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <aside>
+        <div class="card">
+            <h2 class="split">Feature check <span class="empty" id="fc-catalog"></span></h2>
+            <div class="body">
+                <textarea class="fc-input" id="fc-input" placeholder="Describe a feature, e.g. &quot;Reminder email for abandoned carts&quot;"></textarea>
+                <div class="row">
+                    <button id="fc-run">Check</button>
+                    <button class="sec" id="fc-stop" hidden>Stop</button>
+                    <span class="empty" id="fc-info"></span>
+                </div>
+                <div id="fc-result" hidden>
+                    <div class="row"><span class="verdict" id="fc-verdict"></span></div>
+                    <div class="fc-summary" id="fc-summary"></div>
+                    <ul class="plugins" id="fc-matches"></ul>
+                    <div class="msg">AI answer based on the plugin catalog. Check the plugin page before telling a customer.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Plugins in this document</h2>
+            <div class="body"><div class="chips" id="chips"><span class="empty">None accepted yet.</span></div></div>
+        </div>
+
+        <div class="card">
+            <h2>Knowledge base</h2>
+            <div class="body">
+                <div class="empty" id="kb-info">...</div>
+                <div class="msg"><button id="seed">Load ACRIS catalog</button></div>
+                <div class="msg" id="kb-msg"></div>
+            </div>
+        </div>
+    </aside>
+</main>
+
+<script>
+(() => {
+    const $ = (id) => document.getElementById(id);
+    const ta = $('editor');
+    const mirror = $('mirror');
+    const ARROW = '  -> ';
+
+    let ghost = '';
+    let ghostAt = -1;
+    let timer = null;
+    let inflight = null;
+    let acceptedFlag = false;
+
+    const store = {
+        get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+        set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    };
+    ta.value = store.get('aa-draft', '');
+    $('mode').value = store.get('aa-mode', 'plugins');
+
+    function setLatency(text, cls) {
+        const p = $('pill-latency');
+        p.textContent = text;
+        p.className = 'pill' + (cls ? ' ' + cls : '');
+    }
+
+    function currentLine() {
+        const pos = ta.selectionStart;
+        const start = ta.value.lastIndexOf('\n', pos - 1) + 1;
+        let end = ta.value.indexOf('\n', pos);
+        if (end === -1) end = ta.value.length;
+        return { start, end, text: ta.value.slice(start, end), atEnd: pos === end };
+    }
+
+    const requirementOf = (line) => line.split('->')[0].replace(/^\s*[-*\d.)]+\s*/, '').trim();
+
+    async function post(url, body, signal) {
+        const res = await fetch(url, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.status);
+        return data;
+    }
+
+    // ---------------------------------------------------------------- ghost rendering
+    function render() {
+        const v = ta.value;
+        const show = ghost && ghostAt === ta.selectionStart && ta.selectionStart === ta.selectionEnd;
+        $('m-before').textContent = show ? v.slice(0, ghostAt) : v + '​';
+        $('m-ghost').textContent = show ? ghost : '';
+        $('m-after').textContent = show ? v.slice(ghostAt) + '​' : '';
+        mirror.scrollTop = ta.scrollTop;
+    }
+
+    function clearGhost() { ghost = ''; ghostAt = -1; render(); }
+
+    function cancelRequest() {
+        clearTimeout(timer);
+        if (inflight) inflight.abort();
+        inflight = null;
+    }
+
+    function schedule(delay) {
+        cancelRequest();
+        const plugins = $('mode').value === 'plugins';
+        timer = setTimeout(plugins ? requestPlugins : requestCompletion, delay ?? (plugins ? 700 : 300));
+    }
+
+    async function track(label, fn) {
+        const ctrl = new AbortController();
+        inflight = ctrl;
+        setLatency(label);
+        const t0 = performance.now();
+        try {
+            await fn(ctrl.signal);
+            setLatency(Math.round(performance.now() - t0) + ' ms', 'ok');
+        } catch (e) {
+            if (e.name !== 'AbortError') setLatency('error: ' + e.message, 'bad');
+        } finally {
+            if (inflight === ctrl) inflight = null;
+        }
+    }
+
+    // ---------------------------------------------------------------- text autocomplete
+    function requestCompletion() {
+        if (ta.selectionStart !== ta.selectionEnd) return;
+        const pos = ta.selectionStart;
+        const before = ta.value.slice(0, pos);
+        if (before.trim().length < 3) return;
+
+        return track('thinking ...', async (signal) => {
+            const data = await post('api/complete', { before }, signal);
+            if (ta.selectionStart !== pos || ta.value.slice(0, pos) !== before) return;
+            let c = data.completion || '';
+            if (/\s$/.test(before)) c = c.replace(/^[ \t]+/, '');
+            ghost = c;
+            ghostAt = c ? pos : -1;
+            render();
+        });
+    }
+
+    // ---------------------------------------------------------------- plugin suggestions
+    function requestPlugins() {
+        const line = currentLine();
+        const requirement = requirementOf(line.text);
+        if (requirement.length < 4) return;
+
+        return track('matching ...', async (signal) => {
+            const data = await post('api/plugins', { requirement }, signal);
+            renderPlugins(requirement, data);
+            const now = currentLine();
+            if (now.start === line.start && now.text === line.text && now.atEnd && !line.text.includes('->') && data.picked.length) {
+                ghost = ARROW + data.picked.map((p) => p.name).join(', ');
+                ghostAt = ta.selectionStart;
+                render();
+            }
+        });
+    }
+
+    function renderPlugins(requirement, data) {
+        $('req').textContent = 'For: ' + requirement;
+        $('req').title = requirement;
+        const ul = $('plugins');
+        ul.innerHTML = '';
+        if (!data.candidates.length) {
+            ul.innerHTML = '<li class="empty">Nothing found. Load the ACRIS catalog first.</li>';
+            return;
+        }
+        const pickedNames = data.picked.map((p) => p.name);
+        [...data.picked, ...data.candidates.filter((c) => !pickedNames.includes(c.name))].forEach((p) => {
+            const li = document.createElement('li');
+            li.className = pickedNames.includes(p.name) ? 'picked' : '';
+            li.title = 'Click to add to the current line';
+
+            const name = document.createElement('div');
+            name.className = 'pname';
+            name.textContent = p.name;
+            const desc = document.createElement('div');
+            desc.className = 'pdesc';
+            desc.textContent = p.label + (p.description ? ' - ' + p.description : '');
+            li.append(name, desc);
+
+            if (p.url) {
+                const a = document.createElement('a');
+                a.href = p.url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.textContent = 'acris.at';
+                a.onclick = (e) => e.stopPropagation();
+                li.appendChild(a);
+            }
+            li.onclick = () => addPluginToLine(p.name);
+            ul.appendChild(li);
+        });
+    }
+
+    function addPluginToLine(name) {
+        const line = currentLine();
+        if (line.text.includes(name)) return;
+        ta.focus();
+        ta.setSelectionRange(line.end, line.end);
+        clearGhost();
+        acceptedFlag = true;
+        insertText(line.text.includes('->') ? ', ' + name : ARROW + name);
+    }
+
+    function updateChips() {
+        const names = new Set();
+        ta.value.split('\n').forEach((l) => {
+            const i = l.indexOf('->');
+            if (i !== -1) (l.slice(i + 2).match(/\b(?:Acris|Proxa)\w+/g) || []).forEach((n) => names.add(n));
+        });
+        const box = $('chips');
+        box.innerHTML = names.size ? '' : '<span class="empty">None accepted yet.</span>';
+        [...names].sort().forEach((n) => {
+            const c = document.createElement('span');
+            c.className = 'chip';
+            c.textContent = n;
+            box.appendChild(c);
+        });
+    }
+
+    // ---------------------------------------------------------------- editing
+    function insertText(text) {
+        // execCommand keeps native undo; fall back to setRangeText.
+        if (!document.execCommand('insertText', false, text)) {
+            ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
+            onInput({ inputType: 'insertText', data: text });
+        }
+    }
+
+    function accept(part) {
+        const pos = ta.selectionStart;
+        ghost = ghost.slice(part.length);
+        ghostAt = ghost ? pos + part.length : -1;
+        acceptedFlag = true;
+        ta.focus();
+        insertText(part);
+    }
+
+    function onInput(e) {
+        store.set('aa-draft', ta.value);
+        const data = e.data || '';
+        const pos = ta.selectionStart;
+
+        if (acceptedFlag) {
+            // accept() already advanced ghost/ghostAt.
+        } else if (ghost && e.inputType === 'insertText' && data && ghost.startsWith(data) && pos === ghostAt + data.length) {
+            ghost = ghost.slice(data.length);
+            ghostAt = ghost ? pos : -1;
+        } else {
+            ghost = '';
+            ghostAt = -1;
+        }
+        acceptedFlag = false;
+        render();
+        updateChips();
+
+        if (!ghost) schedule();
+        else cancelRequest();
+    }
+
+    ta.addEventListener('input', onInput);
+
+    ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab' && ghost) {
+            e.preventDefault();
+            accept(ghost);
+        } else if ((e.ctrlKey || e.metaKey || e.altKey) && e.key === 'ArrowRight' && ghost) {
+            e.preventDefault();
+            const m = ghost.match(/^\s*(->\s*)?[^\s,]+,?/);
+            accept(m ? m[0] : ghost);
+        } else if (e.key === 'Escape') {
+            cancelRequest();
+            clearGhost();
+            setLatency('idle');
+        } else if (e.ctrlKey && e.key === ' ') {
+            e.preventDefault();
+            clearGhost();
+            schedule(0);
+        }
+    });
+
+    let lastLineStart = -1;
+    document.addEventListener('selectionchange', () => {
+        if (document.activeElement !== ta) return;
+        if (ghost && (ta.selectionStart !== ghostAt || ta.selectionEnd !== ghostAt)) {
+            cancelRequest();
+            clearGhost();
+        }
+        // Moving to another line in plugin mode refreshes the side panel for that line.
+        const line = currentLine();
+        if ($('mode').value === 'plugins' && line.start !== lastLineStart && ta.selectionStart === ta.selectionEnd) {
+            lastLineStart = line.start;
+            if (!ghost) schedule(400);
+        }
+    });
+
+    ta.addEventListener('scroll', () => { mirror.scrollTop = ta.scrollTop; });
+    window.addEventListener('resize', render);
+    $('mode').onchange = () => { store.set('aa-mode', $('mode').value); cancelRequest(); clearGhost(); };
+
+    // ---------------------------------------------------------------- translation
+    let target = null;
+    let trCtrl = null;
+
+    function updateScope() {
+        const sel = ta.selectionEnd - ta.selectionStart;
+        $('scope').textContent = sel > 0 ? 'selection (' + sel + ' chars)' : 'whole text';
+    }
+    document.addEventListener('selectionchange', () => { if (document.activeElement === ta) updateScope(); });
+
+    async function runTranslate(lang) {
+        target = ta.selectionEnd > ta.selectionStart
+            ? { start: ta.selectionStart, end: ta.selectionEnd }
+            : { start: 0, end: ta.value.length };
+        // Plugin annotations ("  -> AcrisX") are not part of the text.
+        const text = ta.value.slice(target.start, target.end).split('\n').map((l) => l.replace(/\s*->.*$/, '')).join('\n');
+        if (!text.trim()) return;
+
+        if (trCtrl) trCtrl.abort();
+        const ctrl = new AbortController();
+        trCtrl = ctrl;
+
+        const out = $('output');
+        out.textContent = '';
+        out.classList.remove('empty');
+        $('out-replace').disabled = true;
+        $('out-copy').disabled = true;
+        $('out-stop').hidden = false;
+        $('tr-info').textContent = 'translating ...';
+        const t0 = performance.now();
+        let firstAt = null;
+
+        try {
+            const res = await fetch('api/translate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, target: lang }),
+                signal: ctrl.signal,
+            });
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            for (;;) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (firstAt === null) firstAt = performance.now();
+                out.textContent += decoder.decode(value, { stream: true });
+                out.scrollTop = out.scrollHeight;
+            }
+            const total = (performance.now() - t0) / 1000;
+            $('tr-info').textContent = 'first token ' + Math.round((firstAt ?? performance.now()) - t0) + ' ms, total ' + total.toFixed(1) + ' s';
+        } catch (e) {
+            $('tr-info').textContent = e.name === 'AbortError' ? 'stopped' : 'error: ' + e.message;
+        } finally {
+            if (trCtrl === ctrl) trCtrl = null;
+            $('out-stop').hidden = true;
+            const has = out.textContent.trim().length > 0;
+            $('out-replace').disabled = !has || lang === 'all';
+            $('out-copy').disabled = !has;
+        }
+    }
+
+    $('tr-one').onclick = () => runTranslate($('lang').value);
+    $('tr-all').onclick = () => runTranslate('all');
+    $('out-stop').onclick = () => trCtrl && trCtrl.abort();
+    $('out-replace').onclick = () => {
+        if (!target) return;
+        ta.focus();
+        ta.setSelectionRange(target.start, target.end);
+        acceptedFlag = true;
+        insertText($('output').textContent.trim());
+    };
+    $('out-copy').onclick = async () => {
+        try {
+            await navigator.clipboard.writeText($('output').textContent.trim());
+            $('tr-info').textContent = 'copied';
+        } catch {
+            // Clipboard API needs https or localhost; fall back to a selection the user can copy.
+            const range = document.createRange();
+            range.selectNodeContents($('output'));
+            getSelection().removeAllRanges();
+            getSelection().addRange(range);
+            $('tr-info').textContent = 'selected, press Ctrl+C';
+        }
+    };
+
+    // ---------------------------------------------------------------- feature check
+    // Own request handling: typing in the editor must not cancel a running check.
+    const VERDICT_LABELS = {
+        exists: 'Exists', partial: 'Partly covered', missing: 'Not found', unclear: 'Unclear, check manually',
+    };
+    let fcCtrl = null;
+    let fcTimer = null;
+    let fcDeep = true; // from /api/status: whether the server allows the deep check
+
+    function renderFeatureCheck(data) {
+        const v = $('fc-verdict');
+        v.textContent = VERDICT_LABELS[data.verdict] || data.verdict;
+        v.className = 'verdict ' + data.verdict;
+        $('fc-summary').textContent = data.summary || '';
+
+        const ul = $('fc-matches');
+        ul.innerHTML = '';
+        data.matches.forEach((m) => {
+            const li = document.createElement('li');
+            li.className = 'static' + (data.verdict === 'exists' || data.verdict === 'partial' ? ' picked' : '');
+
+            const name = document.createElement('div');
+            name.className = 'pname';
+            name.textContent = m.label + ' (' + m.name + ')';
+            li.appendChild(name);
+
+            if (m.reason) {
+                const reason = document.createElement('div');
+                reason.className = 'pdesc';
+                reason.textContent = m.reason;
+                li.appendChild(reason);
+            }
+            if (m.evidence) {
+                const ev = document.createElement('div');
+                ev.className = 'evidence' + (m.verified ? '' : ' unverified');
+                ev.textContent = (m.verified ? 'Catalog: "' : 'Not found word for word in the catalog: "') + m.evidence + '"';
+                li.appendChild(ev);
+            }
+            if (m.url) {
+                const a = document.createElement('a');
+                a.href = m.url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.textContent = 'Plugin page';
+                li.appendChild(a);
+            }
+            ul.appendChild(li);
+        });
+        $('fc-result').hidden = false;
+    }
+
+    async function runFeatureCheck() {
+        const feature = $('fc-input').value.trim();
+        if (feature.length < 4) {
+            $('fc-info').textContent = 'Describe the feature in a few words.';
+            return;
+        }
+        if (fcCtrl) fcCtrl.abort();
+        const ctrl = new AbortController();
+        fcCtrl = ctrl;
+
+        const t0 = performance.now();
+        const seconds = () => Math.round((performance.now() - t0) / 1000);
+        let label = 'checking';
+        const tick = () => { $('fc-info').textContent = label + ' ' + seconds() + ' s ...'; };
+        tick();
+        clearInterval(fcTimer);
+        fcTimer = setInterval(tick, 1000);
+        $('fc-run').disabled = true;
+        $('fc-stop').hidden = false;
+        const ignored = (data) => (data.considered ? ', ' + data.considered + ' plugins considered' : '')
+            + (data.dropped ? ', ' + data.dropped + ' unknown plugin name(s) ignored' : '');
+
+        try {
+            // Step 1: quick check without reasoning, answers in seconds.
+            const quick = await post('api/feature-check', { feature }, ctrl.signal);
+            renderFeatureCheck(quick);
+
+            // Step 2: only a verified "exists" is trusted as is; everything else is double-checked with reasoning,
+            // because the quick check can miss features the catalog only implies.
+            const verifiedHit = quick.verdict === 'exists' && quick.matches.length && quick.matches.every((m) => m.verified);
+            if (verifiedHit || !fcDeep) {
+                $('fc-info').textContent = seconds() + ' s, quick check' + ignored(quick);
+                return;
+            }
+
+            label = 'quick answer shown, double-checking with reasoning';
+            tick();
+            try {
+                const deep = await post('api/feature-check', { feature, deep: true }, ctrl.signal);
+                renderFeatureCheck(deep);
+                $('fc-info').textContent = seconds() + ' s, double-checked' + ignored(deep);
+            } catch (e) {
+                $('fc-info').textContent = (e.name === 'AbortError' ? 'Double-check stopped' : 'Double-check failed (' + e.message + ')')
+                    + ', showing the quick answer.';
+            }
+        } catch (e) {
+            $('fc-info').textContent = e.name === 'AbortError' ? 'stopped' : 'error: ' + e.message;
+        } finally {
+            if (fcCtrl === ctrl) fcCtrl = null;
+            clearInterval(fcTimer);
+            $('fc-run').disabled = false;
+            $('fc-stop').hidden = true;
+        }
+    }
+
+    $('fc-run').onclick = runFeatureCheck;
+    $('fc-stop').onclick = () => { if (fcCtrl) fcCtrl.abort(); };
+    $('fc-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            runFeatureCheck();
+        }
+    });
+
+    // ---------------------------------------------------------------- status + knowledge base
+    async function loadStatus() {
+        try {
+            const s = await (await fetch('api/status')).json();
+            $('pill-model').textContent = 'model: ' + s.model;
+            $('pill-model').className = 'pill ok';
+            const k = $('pill-kb');
+            k.textContent = s.kb ? 'knowledge base: ' + s.kb.count + ' entries' : 'knowledge base: error';
+            k.className = 'pill ' + (s.kb ? 'ok' : 'bad');
+            $('kb-info').textContent = s.kb
+                ? '"' + s.kb.name + '" in Open WebUI: ' + s.kb.count + ' of ' + s.catalogSize + ' catalog documents loaded.'
+                : s.kbError;
+            $('seed').hidden = !!s.kb && s.kb.count >= s.catalogSize;
+            $('fc-catalog').textContent = s.featureCatalog
+                ? s.featureCatalog.count + ' plugins, ' + s.featureCatalog.date
+                : 'catalog missing';
+            $('fc-catalog').title = s.featureCatalogError || '';
+            fcDeep = !s.featureCatalog || s.featureCatalog.deep !== false;
+
+            const lang = $('lang');
+            if (!lang.options.length) {
+                Object.entries(s.languages).forEach(([code, name]) => lang.add(new Option(name + ' (' + code + ')', code)));
+                lang.value = store.get('aa-lang', 'en-GB');
+                lang.onchange = () => store.set('aa-lang', lang.value);
+            }
+        } catch {
+            setLatency('backend unreachable', 'bad');
+        }
+    }
+
+    $('seed').onclick = async (e) => {
+        e.target.disabled = true;
+        $('kb-msg').textContent = 'Uploading the ACRIS catalog, this takes a few minutes ...';
+        try {
+            const r = await post('api/kb/seed', {});
+            $('kb-msg').textContent = 'Added ' + r.added + ', already present ' + r.skipped
+                + (r.errors.length ? ', failed ' + r.errors.length + ': ' + r.errors[0] : '');
+        } catch (err) {
+            $('kb-msg').textContent = 'Failed: ' + err.message;
+        } finally {
+            e.target.disabled = false;
+            loadStatus();
+        }
+    };
+
+    render();
+    updateChips();
+    loadStatus();
+    // Coming back to the tab reloads the model in the background (it is unloaded after 5 idle minutes).
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadStatus(); });
+})();
+</script>
+</body>
+</html>
